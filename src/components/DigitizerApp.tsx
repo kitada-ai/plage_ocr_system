@@ -1080,6 +1080,120 @@ export default function DigitizerApp() {
     }
   };
 
+  // --- Excel清書出力（申込書清書用） ---
+  const onExportDigitizerExcel = async () => {
+    if (rows.length === 0) {
+      alert("データがありません。先にアップロード＆解析を行ってください。");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // メニューヘッダーの特定（氏名・施術実施を除く）
+      const menuHeaders = columnHeaders.filter(
+        (h) => h !== "氏名" && h !== "施術実施" && !h.startsWith("※")
+      );
+
+      // 施設名・日付の取得
+      const docInfoByDateLocal = buildDocInfoByDate(docInfoByImage);
+      const dateKeys = Object.keys(docInfoByDateLocal);
+      const firstInfo = dateKeys.length > 0 ? docInfoByDateLocal[dateKeys[0]] : null;
+
+      let dateStr = "";
+      if (firstInfo?.year && firstInfo?.month && firstInfo?.day) {
+        const yearNum = parseInt(firstInfo.year);
+        const reiwa = !isNaN(yearNum) ? yearNum - 2018 : "";
+        dateStr = `令和${reiwa}年${firstInfo.month}月${firstInfo.day}日`;
+      }
+
+      // 価格情報のマージ（抽出済み → デフォルト）
+      const mergedPrices: Record<string, number> = {};
+      menuHeaders.forEach((h) => {
+        const baseName = h.replace(/[\s\u3000]*[¥￥][\d,]+.*$/, "").trim();
+        const price = getPriceForHeader(h, extractedMenuPrices)
+          ?? getPriceForHeader(h, DEFAULT_MENU_PRICES)
+          ?? 0;
+        mergedPrices[baseName] = price;
+      });
+
+      // 顧客データの構築
+      const customers = rows
+        .filter((row) => !row.results.every((r) => r === null)) // ヘッダー行を除く
+        .map((row, index) => {
+          const menus: Record<string, boolean> = {};
+          menuHeaders.forEach((h) => {
+            const colIndex = columnHeaders.indexOf(h);
+            const baseName = h.replace(/[\s\u3000]*[¥￥][\d,]+.*$/, "").trim();
+            menus[baseName] = row.results[colIndex] === "〇";
+          });
+
+          // 合計金額の計算
+          let totalPrice = 0;
+          Object.entries(menus).forEach(([name, selected]) => {
+            if (selected) totalPrice += mergedPrices[name] || 0;
+          });
+
+          // 値引き適用
+          if (row.discount && row.discount > 0) {
+            totalPrice -= row.discount;
+          }
+
+          return {
+            no: index + 1,
+            room: "",
+            name: row.columns[0] || "",
+            menus,
+            total_price: Math.max(0, totalPrice),
+            is_cancelled: false,
+            remarks: row.remarks || "",
+          };
+        });
+
+      // ヘッダーのベース名リスト
+      const headerBaseNames = menuHeaders.map(
+        (h) => h.replace(/[\s\u3000]*[¥￥][\d,]+.*$/, "").trim()
+      );
+
+      const payload = {
+        facility_name: firstInfo?.facilityName || "",
+        date: dateStr,
+        headers: ["氏名", ...headerBaseNames, "施術実施"],
+        prices: mergedPrices,
+        customers,
+      };
+
+      console.log("📤 Excel清書出力 payload:", payload);
+
+      const res = await fetch("/api/export-digitized-excel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error("Excel export failed:", errorText);
+        throw new Error(`Export failed: ${errorText}`);
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const fileDate = firstInfo?.year && firstInfo?.month && firstInfo?.day
+        ? `${firstInfo.year}${firstInfo.month}${firstInfo.day}`
+        : "output";
+      a.href = url;
+      a.download = `${firstInfo?.facilityName || '申込書'}_${fileDate}_清書.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Excel清書出力エラー:", err);
+      alert("Excel清書出力中にエラーが発生しました。");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const docInfoByDate = buildDocInfoByDate(docInfoByImage);
 
   return (
@@ -1164,6 +1278,7 @@ export default function DigitizerApp() {
           </button>
           <button onClick={addNewMenuColumn} disabled={rows.length === 0} style={{ padding: "10px 20px", backgroundColor: "#8b5cf6", color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: "600" }}>メニュー追加</button>
           <button onClick={countMenuResults} style={{ padding: "10px 20px", backgroundColor: "#059669", color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: "600" }}>データ確定</button>
+          <button onClick={onExportDigitizerExcel} disabled={rows.length === 0 || loading} style={{ padding: "10px 20px", backgroundColor: rows.length === 0 ? "#9ca3af" : "#dc2626", color: "white", border: "none", borderRadius: "6px", cursor: rows.length === 0 ? "not-allowed" : "pointer", fontWeight: "600", display: "flex", alignItems: "center", gap: "6px" }}>📥 Excel清書出力</button>
         </div>
 
         {processingProgress && (
