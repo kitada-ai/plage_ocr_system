@@ -1988,9 +1988,9 @@ async function buildDisplayRows(
 
   // 2. カラム定義の構築 (氏名 -> [メニュー...] -> 施術実施)
 
-  // (A) おなまえ列 (申込書用)
+  // (A) 氏名列
   targetColumnIndices.push(nameColumnIndex);
-  columnHeaders.push("おなまえ");
+  columnHeaders.push("氏名");
 
   // (B) メニュー列 (氏名 と 合計/右端 の間の列)
   // 単純な行フィルタではなく、列インデックスベースでスキャンする（列の欠落を防ぐため）
