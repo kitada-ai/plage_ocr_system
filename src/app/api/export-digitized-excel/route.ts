@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
 import ExcelJS from "exceljs";
-import path from "path";
-import fs from "fs";
 
 // --- 型定義 ---
 interface CustomerData {
@@ -19,27 +17,23 @@ interface CustomerData {
 interface ExportRequest {
   facility_name: string;
   date: string;
-  headers: string[];          // ["氏名", "カット", "カラー(白髪染め)", ..., "施術実施"]
-  prices: Record<string, number>;  // { "カット": 2000, "カラー": 4000, ... }
+  headers: string[];
+  prices: Record<string, number>;
   customers: CustomerData[];
 }
 
 // --- 定数 ---
-const HEADER_ROW_1 = 12;  // カテゴリヘッダー行
-const HEADER_ROW_2 = 13;  // メニュー名行
-const PRICE_ROW = 14;     // 単価行
-const TOTAL_ROW = 15;     // 合計人数行
-const DATA_START_ROW = 17; // データ開始行
+const TITLE_ROW = 1;
+const FACILITY_ROW = 3;
+const HEADER_ROW = 5;   // メニュー名ヘッダー
+const PRICE_ROW = 6;    // 単価行
+const DATA_START_ROW = 7; // データ開始行
 
 // 固定列
-const COL_NO = 2;        // B列: No.
-const COL_ROOM = 3;      // C列: 部屋番号
-const COL_NAME = 4;      // D列: 氏名 (D-Eは結合)
-const MENU_START_COL = 6; // F列からメニュー開始
-
-// 施設名セル・日付セル
-const FACILITY_CELL = "H3";
-const DATE_CELL = "O3";
+const COL_NO = 1;        // A列: No.
+const COL_ROOM = 2;      // B列: 部屋番号
+const COL_NAME = 3;      // C列: 氏名
+const MENU_START_COL = 4; // D列からメニュー開始
 
 export async function POST(req: Request) {
   try {
@@ -52,194 +46,189 @@ export async function POST(req: Request) {
     );
     const menuCount = menuHeaders.length;
 
-    // 合計金額列・施術開始時間列・備考列の位置を計算
-    const colTotal = MENU_START_COL + menuCount;      // メニューの次の列
-    const colTime1 = colTotal + 1;                     // 施術開始時間 第一希望
-    const colTime2 = colTotal + 2;                     // 第二希望
-    const colTime3 = colTotal + 3;                     // 第三希望
-    const colStatus = colTotal + 4;                    // ご案内 有無
-    const colDone = colTotal + 5;                      // 施術実施 有無
-    const colRemarks = colTotal + 6;                   // 備考
+    // 動的列位置の計算
+    const colTotal = MENU_START_COL + menuCount;      // 合計金額
+    const colRemarks = colTotal + 1;                   // 備考
 
-    // --- ベーステンプレートを読み込み ---
-    const templatePath = path.join(
-      process.cwd(),
-      "public",
-      "templates",
-      "digitizer_base.xlsx"
-    );
-
+    // --- ワークブックをゼロから作成 ---
     const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet("申込書");
 
-    if (fs.existsSync(templatePath)) {
-      await workbook.xlsx.readFile(templatePath);
-    } else {
-      // テンプレートがない場合はゼロから作成
-      workbook.addWorksheet("申込書");
+    // --- 列幅の設定 ---
+    ws.getColumn(COL_NO).width = 5;
+    ws.getColumn(COL_ROOM).width = 10;
+    ws.getColumn(COL_NAME).width = 16;
+    for (let i = 0; i < menuCount; i++) {
+      ws.getColumn(MENU_START_COL + i).width = 12;
+    }
+    ws.getColumn(colTotal).width = 10;
+    ws.getColumn(colRemarks).width = 25;
+
+    // --- スタイル定義 ---
+    const thinBorder: Partial<ExcelJS.Borders> = {
+      top: { style: "thin" },
+      bottom: { style: "thin" },
+      left: { style: "thin" },
+      right: { style: "thin" },
+    };
+
+    const headerFill: ExcelJS.Fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FFD9E2F3" },
+    };
+
+    const priceFill: ExcelJS.Fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FFFFF2CC" },
+    };
+
+    // --- 行1: タイトル ---
+    const titleCell = ws.getCell(TITLE_ROW, 1);
+    titleCell.value = "【訪問理美容サービス 申込書】";
+    titleCell.font = { bold: true, size: 14 };
+    ws.mergeCells(TITLE_ROW, 1, TITLE_ROW, Math.min(colRemarks, 8));
+
+    // --- 行3: 施設名・日付 ---
+    const facCell = ws.getCell(FACILITY_ROW, 1);
+    facCell.value = `施設名：${facility_name || ""}`;
+    facCell.font = { bold: true, size: 11 };
+    ws.mergeCells(FACILITY_ROW, 1, FACILITY_ROW, 3);
+
+    const dateCell = ws.getCell(FACILITY_ROW, MENU_START_COL);
+    dateCell.value = `施術日：${date || ""}`;
+    dateCell.font = { bold: true, size: 11 };
+    ws.mergeCells(FACILITY_ROW, MENU_START_COL, FACILITY_ROW, Math.min(MENU_START_COL + 3, colRemarks));
+
+    // --- 行5: ヘッダー（メニュー名）---
+    const headerRow = ws.getRow(HEADER_ROW);
+    headerRow.height = 30;
+    const headerDefs = [
+      { col: COL_NO, value: "No." },
+      { col: COL_ROOM, value: "部屋番号" },
+      { col: COL_NAME, value: "氏名" },
+      ...menuHeaders.map((h, i) => ({ col: MENU_START_COL + i, value: h })),
+      { col: colTotal, value: "合計金額" },
+      { col: colRemarks, value: "備考" },
+    ];
+    for (const def of headerDefs) {
+      const cell = headerRow.getCell(def.col);
+      cell.value = def.value;
+      cell.font = { bold: true, size: 9 };
+      cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+      cell.border = thinBorder;
+      cell.fill = headerFill;
     }
 
-    const worksheet = workbook.worksheets[0];
-    worksheet.name = "申込書";
-
-    // --- 施設名・日付の書き込み ---
-    worksheet.getCell(FACILITY_CELL).value = facility_name || "";
-    worksheet.getCell(DATE_CELL).value = date || "";
-
-    // --- ヘッダー行の構築 ---
-    // 行12: カテゴリヘッダー
-    const row12 = worksheet.getRow(HEADER_ROW_1);
-    row12.getCell(COL_NO).value = "No.";
-    row12.getCell(COL_ROOM).value = "部屋番号";
-    row12.getCell(COL_NAME).value = "氏名";
+    // --- 行6: 単価行 ---
+    const priceRow = ws.getRow(PRICE_ROW);
+    priceRow.height = 20;
+    const pCell1 = priceRow.getCell(COL_NO);
+    pCell1.value = "";
+    pCell1.border = thinBorder;
+    const pCell2 = priceRow.getCell(COL_ROOM);
+    pCell2.value = "";
+    pCell2.border = thinBorder;
+    const pCell3 = priceRow.getCell(COL_NAME);
+    pCell3.value = "（単価）";
+    pCell3.font = { size: 8, italic: true };
+    pCell3.alignment = { horizontal: "center", vertical: "middle" };
+    pCell3.border = thinBorder;
+    pCell3.fill = priceFill;
     for (let i = 0; i < menuCount; i++) {
-      row12.getCell(MENU_START_COL + i).value = "メニュー/料金";
-    }
-    row12.getCell(colTotal).value = "合計料金";
-    row12.getCell(colTime1).value = "施術開始時間の希望";
-    row12.getCell(colStatus).value = "ご案内\n有無";
-    row12.getCell(colDone).value = "施術実施\n有無";
-    row12.getCell(colRemarks).value = "備考";
-
-    // 行13: メニュー名
-    const row13 = worksheet.getRow(HEADER_ROW_2);
-    row13.getCell(COL_NO).value = "No.";
-    row13.getCell(COL_ROOM).value = "部屋番号";
-    row13.getCell(COL_NAME).value = "氏名";
-    for (let i = 0; i < menuCount; i++) {
-      row13.getCell(MENU_START_COL + i).value = menuHeaders[i];
-    }
-    row13.getCell(colTotal).value = "合計金額";
-    row13.getCell(colTime1).value = "第一希望";
-    row13.getCell(colTime2).value = "第二希望";
-    row13.getCell(colTime3).value = "第三希望";
-    row13.getCell(colStatus).value = "ご案内\n有無";
-    row13.getCell(colDone).value = "施術実施\n有無";
-    row13.getCell(colRemarks).value = "備考";
-
-    // 行14: 単価
-    const row14 = worksheet.getRow(PRICE_ROW);
-    row14.getCell(COL_NO).value = "No.";
-    row14.getCell(COL_ROOM).value = "部屋番号";
-    row14.getCell(COL_NAME).value = "氏名";
-    for (let i = 0; i < menuCount; i++) {
+      const cell = priceRow.getCell(MENU_START_COL + i);
       const menuName = menuHeaders[i];
-      row14.getCell(MENU_START_COL + i).value = prices[menuName] ?? 0;
+      const price = prices[menuName] ?? 0;
+      cell.value = price > 0 ? `¥${price.toLocaleString()}` : "¥0";
+      cell.font = { size: 8 };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.border = thinBorder;
+      cell.fill = priceFill;
     }
-    row14.getCell(colTotal).value = "合計金額";
-
-    // ヘッダー行のスタイル
-    for (const row of [row12, row13, row14]) {
-      row.eachCell({ includeEmpty: false }, (cell) => {
-        cell.font = { bold: true, size: 9 };
-        cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
-        cell.border = {
-          top: { style: "thin" },
-          bottom: { style: "thin" },
-          left: { style: "thin" },
-          right: { style: "thin" },
-        };
-      });
-    }
-
-    // --- 合計行 (行15) ---
-    const row15 = worksheet.getRow(TOTAL_ROW);
-    row15.getCell(COL_NO).value = "合計人数";
-    const lastDataRow = DATA_START_ROW + Math.max(customers.length - 1, 0);
-    // 氏名列のCOUNTA
-    const nameColLetter = getColumnLetter(COL_NAME);
-    row15.getCell(COL_NAME).value = {
-      formula: `COUNTA(${nameColLetter}${DATA_START_ROW}:${nameColLetter}${lastDataRow + 30})`,
-    };
-    // メニュー列のCOUNTIF
-    for (let i = 0; i < menuCount; i++) {
-      const col = MENU_START_COL + i;
-      const colLetter = getColumnLetter(col);
-      row15.getCell(col).value = {
-        formula: `COUNTIF(${colLetter}${DATA_START_ROW}:${colLetter}${lastDataRow + 30},"〇")`,
-      };
-    }
-    // 合計金額のSUM
-    const totalColLetter = getColumnLetter(colTotal);
-    row15.getCell(colTotal).value = {
-      formula: `SUM(${totalColLetter}${DATA_START_ROW}:${totalColLetter}${lastDataRow + 30})`,
-    };
-    row15.getCell(COL_NO).font = { bold: true, size: 9 };
+    const pCellTotal = priceRow.getCell(colTotal);
+    pCellTotal.value = "";
+    pCellTotal.border = thinBorder;
+    pCellTotal.fill = priceFill;
+    const pCellRemarks = priceRow.getCell(colRemarks);
+    pCellRemarks.value = "";
+    pCellRemarks.border = thinBorder;
+    pCellRemarks.fill = priceFill;
 
     // --- データ行の書き込み ---
     customers.forEach((customer, index) => {
       const rowNum = DATA_START_ROW + index;
-      const row = worksheet.getRow(rowNum);
+      const row = ws.getRow(rowNum);
+      row.height = 22;
 
       // No.
-      row.getCell(COL_NO).value = customer.no || index + 1;
+      const cellNo = row.getCell(COL_NO);
+      cellNo.value = customer.no || index + 1;
+      cellNo.alignment = { horizontal: "center", vertical: "middle" };
+      cellNo.border = thinBorder;
+
       // 部屋番号
-      row.getCell(COL_ROOM).value = customer.room || "";
+      const cellRoom = row.getCell(COL_ROOM);
+      cellRoom.value = customer.room || "";
+      cellRoom.alignment = { horizontal: "center", vertical: "middle" };
+      cellRoom.border = thinBorder;
+
       // 氏名
-      row.getCell(COL_NAME).value = customer.name || "";
+      const cellName = row.getCell(COL_NAME);
+      cellName.value = customer.name || "";
+      cellName.alignment = { horizontal: "left", vertical: "middle" };
+      cellName.border = thinBorder;
 
       // メニュー列
       for (let i = 0; i < menuCount; i++) {
         const menuName = menuHeaders[i];
+        const cell = row.getCell(MENU_START_COL + i);
         if (customer.is_cancelled) {
-          row.getCell(MENU_START_COL + i).value = "";
+          cell.value = "";
         } else {
-          row.getCell(MENU_START_COL + i).value = customer.menus[menuName] ? "〇" : "";
+          cell.value = customer.menus[menuName] ? "〇" : "";
         }
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = thinBorder;
+        cell.font = { size: 10 };
       }
 
-      // 合計金額（数式で計算 or 直接値）
+      // 合計金額（数式で計算）
+      const cellTotal = row.getCell(colTotal);
       if (customer.is_cancelled) {
-        row.getCell(colTotal).value = 0;
+        cellTotal.value = 0;
       } else {
-        // 数式: メニュー列の〇がある列の単価を合計
-        const menuFormulaParts: string[] = [];
+        const formulaParts: string[] = [];
         for (let i = 0; i < menuCount; i++) {
           const menuColLetter = getColumnLetter(MENU_START_COL + i);
           const priceColLetter = getColumnLetter(MENU_START_COL + i);
-          menuFormulaParts.push(
+          formulaParts.push(
             `IF(${menuColLetter}${rowNum}="〇",${priceColLetter}${PRICE_ROW},0)`
           );
         }
-        if (menuFormulaParts.length > 0) {
-          row.getCell(colTotal).value = {
-            formula: menuFormulaParts.join("+"),
-          };
+        if (formulaParts.length > 0) {
+          cellTotal.value = { formula: formulaParts.join("+") };
         } else {
-          row.getCell(colTotal).value = customer.total_price || 0;
+          cellTotal.value = customer.total_price || 0;
         }
       }
-
-      // 施術開始時間
-      if (customer.time_slots && customer.time_slots.length > 0) {
-        if (customer.time_slots[0]) row.getCell(colTime1).value = customer.time_slots[0];
-        if (customer.time_slots[1]) row.getCell(colTime2).value = customer.time_slots[1];
-        if (customer.time_slots[2]) row.getCell(colTime3).value = customer.time_slots[2];
-      }
+      cellTotal.alignment = { horizontal: "right", vertical: "middle" };
+      cellTotal.border = thinBorder;
+      cellTotal.numFmt = "¥#,##0";
 
       // 備考
+      const cellRemarks = row.getCell(colRemarks);
       const remarkParts: string[] = [];
       if (customer.is_cancelled) remarkParts.push("キャンセル");
       if (customer.remarks) remarkParts.push(customer.remarks);
-      row.getCell(colRemarks).value = remarkParts.join(" / ") || "";
-
-      // セルスタイル
-      row.eachCell({ includeEmpty: false }, (cell) => {
-        cell.font = { size: 9 };
-        cell.alignment = { vertical: "middle", horizontal: "center" };
-        cell.border = {
-          top: { style: "thin" },
-          bottom: { style: "thin" },
-          left: { style: "thin" },
-          right: { style: "thin" },
-        };
-      });
-
-      // 氏名列は左寄せ
-      row.getCell(COL_NAME).alignment = { vertical: "middle", horizontal: "left" };
+      cellRemarks.value = remarkParts.join(" / ") || "";
+      cellRemarks.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+      cellRemarks.border = thinBorder;
 
       // キャンセル行のスタイル
       if (customer.is_cancelled) {
-        row.eachCell({ includeEmpty: false }, (cell) => {
+        for (let c = COL_NO; c <= colRemarks; c++) {
+          const cell = row.getCell(c);
           cell.font = {
             size: 9,
             strike: true,
@@ -250,25 +239,55 @@ export async function POST(req: Request) {
             pattern: "solid",
             fgColor: { argb: "FFF0F0F0" },
           };
-        });
+        }
       }
     });
 
-    // --- 列幅の設定 ---
-    worksheet.getColumn(COL_NO).width = 5;
-    worksheet.getColumn(COL_ROOM).width = 10;
-    worksheet.getColumn(COL_NAME).width = 18;
-    worksheet.getColumn(COL_NAME + 1).width = 2; // E列（氏名結合分）
+    // --- 合計行 ---
+    const lastDataRow = DATA_START_ROW + Math.max(customers.length - 1, 0);
+    const totalRowNum = lastDataRow + 1;
+    const totalRow = ws.getRow(totalRowNum);
+    totalRow.height = 22;
+
+    const totalLabel = totalRow.getCell(COL_NO);
+    totalLabel.value = "合計";
+    totalLabel.font = { bold: true, size: 10 };
+    totalLabel.alignment = { horizontal: "center", vertical: "middle" };
+    totalLabel.border = thinBorder;
+    totalLabel.fill = headerFill;
+    ws.mergeCells(totalRowNum, COL_NO, totalRowNum, COL_NAME);
+
+    // メニューごとのCOUNTIF
     for (let i = 0; i < menuCount; i++) {
-      worksheet.getColumn(MENU_START_COL + i).width = 10;
+      const col = MENU_START_COL + i;
+      const colLetter = getColumnLetter(col);
+      const cell = totalRow.getCell(col);
+      cell.value = {
+        formula: `COUNTIF(${colLetter}${DATA_START_ROW}:${colLetter}${lastDataRow},"〇")`,
+      };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.border = thinBorder;
+      cell.fill = headerFill;
+      cell.font = { bold: true, size: 10 };
     }
-    worksheet.getColumn(colTotal).width = 10;
-    worksheet.getColumn(colTime1).width = 10;
-    worksheet.getColumn(colTime2).width = 10;
-    worksheet.getColumn(colTime3).width = 10;
-    worksheet.getColumn(colStatus).width = 8;
-    worksheet.getColumn(colDone).width = 8;
-    worksheet.getColumn(colRemarks).width = 25;
+
+    // 合計金額のSUM
+    const totalColLetter = getColumnLetter(colTotal);
+    const sumCell = totalRow.getCell(colTotal);
+    sumCell.value = {
+      formula: `SUM(${totalColLetter}${DATA_START_ROW}:${totalColLetter}${lastDataRow})`,
+    };
+    sumCell.alignment = { horizontal: "right", vertical: "middle" };
+    sumCell.border = thinBorder;
+    sumCell.fill = headerFill;
+    sumCell.font = { bold: true, size: 10 };
+    sumCell.numFmt = "¥#,##0";
+
+    // 備考セル（空）
+    const remarksTotal = totalRow.getCell(colRemarks);
+    remarksTotal.value = "";
+    remarksTotal.border = thinBorder;
+    remarksTotal.fill = headerFill;
 
     // --- バッファ生成・レスポンス返却 ---
     const buffer = await workbook.xlsx.writeBuffer();
@@ -294,7 +313,7 @@ export async function POST(req: Request) {
   }
 }
 
-// --- ヘルパー: 列番号をExcel列文字に変換 (1=A, 2=B, ..., 27=AA) ---
+// --- ヘルパー: 列番号をExcel列文字に変換 ---
 function getColumnLetter(colNum: number): string {
   let result = "";
   let n = colNum;
