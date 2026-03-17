@@ -1,0 +1,12 @@
+.env.example
+.gitignore
+filenames.txt
+lint_output.txt
+lint_results.json
+next-env.d.ts
+next.config.ts
+package-lock.json
+package.json
+postcss.config.mjs
+README.md
+tsconfig.json
