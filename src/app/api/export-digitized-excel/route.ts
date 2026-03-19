@@ -79,19 +79,25 @@ export async function POST(req: Request) {
       await workbook.xlsx.readFile(templatePath);
       const worksheet = workbook.worksheets[0];
 
-      // --- レイアウトの動的検出 ---
+      // --- レイアウトの動的検出 & 数式クリア (Shared Formula対策) ---
       let rowFacility = 3, colFacility = 9, colDate = 16, rowHeader = 13, rowTotal = 14, rowExample = 15, rowDataStart = 16;
-      for (let r = 1; r <= 21; r++) {
-        const row = worksheet.getRow(r);
-        for (let c = 1; c <= 25; c++) {
-          const val = String(row.getCell(c).value || "");
-          if (val.includes("施設名")) { rowFacility = r; colFacility = c; }
-          if (val.includes("施術日")) { colDate = c; }
-          if (val.includes("No.")) { rowHeader = r; }
-          if (val.includes("合計人数")) { rowTotal = r; }
-          if (val.includes("記入例")) { rowExample = r; rowDataStart = r + 1; }
-        }
-      }
+      worksheet.eachRow((row, rowKey) => {
+        row.eachCell((cell, colKey) => {
+          const val = String(cell.value || "");
+          if (val.includes("施設名")) { rowFacility = rowKey; colFacility = colKey; }
+          if (val.includes("施術日")) { colDate = colKey; }
+          if (val.includes("No.")) { rowHeader = rowKey; }
+          if (val.includes("合計人数")) { rowTotal = rowKey; }
+          if (val.includes("記入例")) { rowExample = rowKey; rowDataStart = rowKey + 1; }
+          
+          // Shared Formula エラー対策: ヘッダーやデータ領域の既存の数式をクリア
+          if (rowKey >= 10 && (cell.type === ExcelJS.ValueType.Formula || (cell.value && typeof cell.value === 'object' && 'formula' in cell.value))) {
+            const currentVal = cell.result !== undefined ? cell.result : cell.value;
+            // 完全に数式を除去し、結果だけに置き換える（または空にする）
+            cell.value = (typeof currentVal === 'object' && currentVal !== null && 'result' in currentVal) ? (currentVal as any).result : currentVal;
+          }
+        });
+      });
 
       // --- ヘッダー書き込み ---
       worksheet.getRow(rowFacility).getCell(colFacility).value = `施設名：${facilityName || ""}`;
@@ -165,10 +171,17 @@ export async function POST(req: Request) {
       if (rowTotal) {
         const totalRow = worksheet.getRow(rowTotal);
         totalRow.getCell(4).value = customers.length;
+        
+        // 〇の数をカウント（各メニュー列ごと）
         for (let c = 6; c <= 14; c++) {
           if (totalRow.getCell(c).value !== null) {
-            const ltr = String.fromCharCode(64 + c);
-            totalRow.getCell(c).value = { formula: `COUNTIF(${ltr}${rowDataStart}:${ltr}${rowDataStart + customers.length + 5},"〇")` };
+            let count = 0;
+            customers.forEach((cust, idx) => {
+              const rowNum = rowDataStart + idx;
+              const val = worksheet.getRow(rowNum).getCell(c).value;
+              if (val === "〇") count++;
+            });
+            totalRow.getCell(c).value = count;
           }
         }
       }
