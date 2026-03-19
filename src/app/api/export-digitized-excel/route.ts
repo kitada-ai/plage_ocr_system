@@ -70,7 +70,7 @@ export async function POST(req: Request) {
       const sheet = workbook.sheet("申込書");
 
       // --- 1. 基本設定・列幅・フォント ---
-      sheet.range("A1:Z500").style("fontName", "Yu Gothic");
+      sheet.range("A1:Z500").style("fontFamily", "Yu Gothic");
       
       const colWidths: Record<string, number> = {
         B: 5, C: 10, D: 18, E: 6, F: 12, G: 12, H: 12, I: 12, J: 12, K: 12,
