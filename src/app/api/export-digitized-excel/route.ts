@@ -114,13 +114,8 @@ export async function POST(req: Request) {
       });
 
       // --- ユーザー指定の行マッピング ---
-      // 行11: 空白 (既存の記入例などをクリア)
-      sheet.row(11).clear();
-
-      // 行12-14: 項目のヘッダー (テンプレートのRow 8-10からコピー)
-      // 他のテンプレートに合わせて動的に取得する代わりに、12-14を固定ヘッダーとする
-      // 実際には 11行目以降を一度すべてクリアして構築
-      for (let r = 11; r <= 100; r++) sheet.row(r).clear();
+      // 11行目以降を一度すべてクリアして構築
+      sheet.range("A11:Z200").value(null);
 
       // ヘッダー labels (Row 12, 13, 14)
       sheet.row(12).cell(2).value("No.");
