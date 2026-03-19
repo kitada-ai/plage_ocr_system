@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import path from "path";
 import fs from "fs";
 import os from "os";
-import ExcelJS from "exceljs";
 
 // --- 型定義 ---
 interface MenuItem {
@@ -73,37 +72,38 @@ export async function POST(req: Request) {
       }
     }
 
-    // --- Excel生成 (xlsx-populate) ---
+    // --- Excel生成 (exceljsに戻し、Shared Formulaエラー対策を強化) ---
     try {
-      const XlsxPopulate = require("xlsx-populate");
-      const workbook = await XlsxPopulate.fromFileAsync(templatePath);
-      const sheet = workbook.sheet(0);
+      const ExcelJS = require("exceljs");
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(templatePath);
+      const worksheet = workbook.worksheets[0];
 
       // --- レイアウトの動的検出 ---
       let rowFacility = 3, colFacility = 9, colDate = 16, rowHeader = 13, rowTotal = 14, rowExample = 15, rowDataStart = 16;
-      for (let r = 1; r <= 25; r++) {
-        for (let c = 1; c <= 25; c++) {
-          const cell = sheet.row(r).cell(c);
-          const val = String(cell.value() || "");
-          if (val.includes("施設名")) { rowFacility = r; colFacility = c; }
-          if (val.includes("施術日")) { colDate = c; }
-          if (val.includes("No.")) { rowHeader = r; }
-          if (val.includes("合計人数")) { rowTotal = r; }
-          if (val.includes("記入例")) { rowExample = r; rowDataStart = r + 1; }
-        }
-      }
+      worksheet.eachRow((row: any, rowKey: number) => {
+        row.eachCell((cell: any, colKey: number) => {
+          const val = String(cell.value || "");
+          if (val.includes("施設名")) { rowFacility = rowKey; colFacility = colKey; }
+          if (val.includes("施術日")) { colDate = colKey; }
+          if (val.includes("No.")) { rowHeader = rowKey; }
+          if (val.includes("合計人数")) { rowTotal = rowKey; }
+          if (val.includes("記入例")) { rowExample = rowKey; rowDataStart = rowKey + 1; }
+        });
+      });
 
       // --- ヘッダー書き込み ---
-      sheet.row(rowFacility).cell(colFacility).value(`施設名：${facilityName || ""}`);
+      worksheet.getRow(rowFacility).getCell(colFacility).value = `施設名：${facilityName || ""}`;
       const yearInt = parseInt(year || "0");
       const reiwa = yearInt > 2018 ? yearInt - 2018 : "";
-      sheet.row(rowFacility).cell(colDate).value(`施術日：令和 ${reiwa} 年 ${month || "  "} 月 ${day || "  "} 日`);
+      worksheet.getRow(rowFacility).getCell(colDate).value = `施術日：令和 ${reiwa} 年 ${month || "  "} 月 ${day || "  "} 日`;
 
       // --- メニュー列の特定 ---
       const menuCols: Record<string, number> = {};
       for (const r of [rowHeader - 1, rowHeader]) {
+        const row = worksheet.getRow(r);
         for (let c = 7; c <= 15; c++) {
-          const v = String(sheet.row(r).cell(c).value() || "");
+          const v = String(row.getCell(c).value || "");
           if (v && !["No.", "部屋番号", "氏名", "性別", "合計料金", "施術開始時間の希望", "合計", "料金"].some(s => v.includes(s))) {
             const cleanV = v.replace(/\n/g, "").split(" ")[0].split("(")[0].trim();
             if (cleanV) menuCols[cleanV] = c;
@@ -115,32 +115,27 @@ export async function POST(req: Request) {
       const customers = body.customers || [];
       customers.forEach((customer, idx) => {
         const rowNum = rowDataStart + idx;
-        const row = sheet.row(rowNum);
-        const exampleRow = sheet.row(rowExample);
+        const row = worksheet.getRow(rowNum);
+        const exampleRow = worksheet.getRow(rowExample);
 
         // 基本情報
-        row.cell(2).value(customer.no || (idx + 1));
-        row.cell(3).value(customer.room || "");
-        row.cell(4).value(customer.name || "");
-        row.cell(6).value(customer.gender || "");
+        row.getCell(2).value = customer.no || (idx + 1);
+        row.getCell(3).value = customer.room || "";
+        row.getCell(4).value = customer.name || "";
+        row.getCell(6).value = customer.gender || "";
 
-        // スタイルのコピー (記入例から) - 個別のプロパティを安全にコピー
+        // スタイルのコピー (記入例から個別に、かつ数式セルは避ける)
         for (let c = 2; c <= 20; c++) {
-          const sourceCell = exampleRow.cell(c);
-          const targetCell = row.cell(c);
-          
-          // フォント、塗りつぶし、枠線、アライメント、表示形式を個別にコピー
-          const styleKeys: any[] = ["fontFamily", "fontSize", "bold", "italic", "underline", "fontColor", "fill", "border", "horizontalAlignment", "verticalAlignment", "numberFormat"];
-          styleKeys.forEach(key => {
-            try {
-              const styleVal = sourceCell.style(key);
-              if (styleVal !== undefined && styleVal !== null) {
-                targetCell.style(key, styleVal);
-              }
-            } catch (e) {
-              // スタイルコピーのエラーは無視して継続
-            }
-          });
+          const srcCell = exampleRow.getCell(c);
+          const dstCell = row.getCell(c);
+          if (srcCell.style) {
+            // formulaプロパティを破壊しないよう、視覚的スタイルのみをセット
+            dstCell.font = srcCell.font;
+            dstCell.fill = srcCell.fill;
+            dstCell.border = srcCell.border;
+            dstCell.alignment = srcCell.alignment;
+            dstCell.numFmt = srcCell.numFmt;
+          }
         }
 
         // メニュー選択 (〇)
@@ -148,7 +143,7 @@ export async function POST(req: Request) {
         selectedMenus.forEach(mName => {
           for (const [colName, colIdx] of Object.entries(menuCols)) {
             if (mName.includes(colName) || colName.includes(mName)) {
-              row.cell(colIdx).value("〇");
+              row.getCell(colIdx).value = "〇";
               break;
             }
           }
@@ -156,58 +151,49 @@ export async function POST(req: Request) {
 
         // 希望時間
         const times = customer.preferredTimes || [];
-        times.forEach((t, i) => { if (i < 3) row.cell(13 + i).value(t); });
+        times.forEach((t, i) => { if (i < 3) row.getCell(13 + i).value = t; });
 
         // その他
-        row.cell(16).value(customer.isGuided || "");
-        if (customer.hasService) row.cell(17).value("サイン");
-        row.cell(18).value(customer.isAdditionalMenuAllowed || "可・否");
-        row.cell(19).value(customer.isCustomOrder || "本人・お任せ");
-        row.cell(20).value(customer.remarks || "");
+        row.getCell(16).value = customer.isGuided || "";
+        if (customer.hasService) row.getCell(17).value = "サイン";
+        row.getCell(18).value = customer.isAdditionalMenuAllowed || "可・否";
+        row.getCell(19).value = customer.isCustomOrder || "本人・お任せ";
+        row.getCell(20).value = customer.remarks || "";
       });
 
       // --- 合計人数行 ---
       if (rowTotal) {
-        const totalCell = sheet.row(rowTotal).cell(4);
-        totalCell.value(customers.length);
+        const totalRow = worksheet.getRow(rowTotal);
+        totalRow.getCell(4).value = customers.length;
         
-        // メニュー列ごとの合計 (数式を維持)
+        // メニュー列ごとの合計 (Shared Formulaを避け、個別数式として設定)
         for (let c = 6; c <= 15; c++) {
-          const cell = sheet.row(rowTotal).cell(c);
-          if (cell.value() !== null && typeof cell.value() !== 'string') {
-             // すでに数式が入っているかチェック、入っていれば再設定するかそのまま
-             const ltr = String.fromCharCode(64 + c);
-             cell.formula(`COUNTIF(${ltr}${rowDataStart}:${ltr}${rowDataStart + customers.length + 10},"〇")`);
+          if (totalRow.getCell(c).value !== null) {
+            const ltr = String.fromCharCode(64 + c);
+            totalRow.getCell(c).value = { 
+              formula: `COUNTIF(${ltr}${rowDataStart}:${ltr}${rowDataStart + customers.length + 5},"〇")`
+            };
           }
         }
       }
 
-      // 申込書以外のシートを削除 (任意)
-      const allSheets = workbook.sheets();
-      const mainSheet = allSheets[0];
-      allSheets.forEach((s: any, idx: number) => {
-        if (idx > 0 && s.name() !== "申込書") {
-           // s.delete(); // xlsx-populateではdeleteできる
-        }
-      });
-
-      const buffer = await workbook.outputAsync();
+      const buffer = await workbook.xlsx.writeBuffer();
 
       const formatDate = `${year || ""}${month || ""}${day || ""}`;
       const fileName = `${facilityName || "申込書"}_${formatDate || "清書"}.xlsx`
         .replace(/[/\\?%*:|"<>]/g, "_");
 
-      return new NextResponse(buffer, {
+      return new NextResponse(buffer as any, {
         status: 200,
         headers: {
           "Content-Disposition": `attachment; filename="${encodeURIComponent(fileName)}"`,
           "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         },
       });
-    } catch (excelError: any) {
-      console.error("Excel Generation Error:", excelError);
+    } catch (error: any) {
+      console.error("Excel Generation Error:", error);
       return NextResponse.json(
-        { error: "Excel生成に失敗しました", details: excelError.message },
+        { error: "Excel生成に失敗しました", details: error.message },
         { status: 500 }
       );
     }
