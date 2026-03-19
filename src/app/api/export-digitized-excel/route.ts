@@ -2,59 +2,8 @@ import { NextResponse } from "next/server";
 import path from "path";
 import fs from "fs";
 import os from "os";
-import JSZip from "jszip";
 
-// --- 共有数式 (Shared Formula) を個別数式に変換するXMLリペア関数 ---
-async function fixXlsxSharedFormulas(buffer: Buffer): Promise<Buffer> {
-  const zip = await JSZip.loadAsync(buffer);
-  
-  // 1. 各シートの数式タグをスキャンして共有数式をフラット化（より強力な正規表現を使用）
-  const sheetFiles = Object.keys(zip.files).filter(name => name.startsWith("xl/worksheets/sheet"));
-  for (const fileName of sheetFiles) {
-    let xml = await zip.file(fileName)!.async("string");
-    
-    // マスター数式の収集
-    const masterFormulas: Record<string, string> = {};
-    const masterRegex = /<f [^>]*t="shared"[^>]*si="(\d+)"[^>]*>([^<]+)<\/f>/g;
-    let m;
-    while ((m = masterRegex.exec(xml)) !== null) masterFormulas[m[1]] = m[2];
-    
-    // 全ての <f> タグから shared 属性を削除し、個別数式に変換
-    // クローン置換
-    xml = xml.replace(/<f [^>]*t="shared"[^>]*si="(\d+)"[^>]*\/>/g, (match, si) => {
-      const formula = masterFormulas[si];
-      return formula ? `<f>${formula}</f>` : ""; // 数式が見つからない場合は空にする（エラー防止）
-    });
-    // マスター置換
-    xml = xml.replace(/<f [^>]*t="shared"[^>]*si="(\d+)"[^>]*>([^<]*)<\/f>/g, (match, si, formula) => {
-      const fString = formula || masterFormulas[si] || "";
-      return fString ? `<f>${fString}</f>` : "";
-    });
 
-    zip.file(fileName, xml);
-  }
-
-  // 2. calcChain.xmlを削除して不整合を完全に回避
-  zip.remove("xl/calcChain.xml");
-
-  // 3. [Content_Types].xml から calcChain への参照を確実に削除
-  const contentTypesPath = "[Content_Types].xml";
-  if (zip.file(contentTypesPath)) {
-    let ctXml = await zip.file(contentTypesPath)!.async("string");
-    ctXml = ctXml.replace(/<Override[^>]*PartName="\/xl\/calcChain\.xml"[^>]*\/>/g, "");
-    zip.file(contentTypesPath, ctXml);
-  }
-
-  // 4. xl/_rels/workbook.xml.rels から calcChain の参照を確実に削除
-  const workbookRelsPath = "xl/_rels/workbook.xml.rels";
-  if (zip.file(workbookRelsPath)) {
-    let relsXml = await zip.file(workbookRelsPath)!.async("string");
-    relsXml = relsXml.replace(/<Relationship [^>]*Target="calcChain\.xml"[^>]*\/>/g, "");
-    zip.file(workbookRelsPath, relsXml);
-  }
-
-  return await zip.generateAsync({ type: "nodebuffer" });
-}
 
 // --- 型定義 ---
 interface MenuItem {
