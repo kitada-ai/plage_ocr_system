@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "請求書作成支援システム",
-  description: "理容・美容施設の施術記録表を画像から読み取り、Excel請求書として出力するシステム",
+  title: "申込書清書システム",
+  description: "理容・美容施設の施術記録表を画像から読み取り、Excel申込書として出力するシステム",
 };
 
 export default function RootLayout({

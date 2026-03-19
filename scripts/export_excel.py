@@ -98,6 +98,11 @@ def export_excel(payload_path, template_path, output_path):
         # 備考
         ws.cell(row=row_num, column=COL_REMARKS).value = customer.get('remarks', '')
 
+    # 「申込書」以外のシートを削除 (ユーザーの要望: 請求書ではなく申込書として出力)
+    for sheetname in wb.sheetnames:
+        if sheetname != "申込書":
+            del wb[sheetname]
+
     # 保存
     wb.save(output_path)
 
