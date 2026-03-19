@@ -69,8 +69,7 @@ export async function POST(req: Request) {
         const rowNum = rowDataStart + idx;
         const row = sheet.row(rowNum);
         
-        // B: No, C: 部屋番号, D: 氏名, F: 性別
-        row.cell(2).value(customer.no || (idx + 1));
+        // C: 部屋番号, D: 氏名, F: 性別
         row.cell(3).value(customer.room || "");
         row.cell(4).value(customer.name || "");
         row.cell(6).value(customer.gender || "");
@@ -84,8 +83,7 @@ export async function POST(req: Request) {
           }
         });
 
-        // O: 合計料金 (テンプレートの「合計料金」列)
-        row.cell(15).value(""); // OCRの合計料金があればここに
+        // O: 合計料金 はテンプレート側を維持するためノータッチ
 
         // P, Q, R: 第一〜第三希望
         const times = customer.preferredTimes || [];
