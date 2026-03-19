@@ -124,10 +124,23 @@ export async function POST(req: Request) {
         row.cell(4).value(customer.name || "");
         row.cell(6).value(customer.gender || "");
 
-        // スタイルのコピー (記入例から)
+        // スタイルのコピー (記入例から) - 個別のプロパティを安全にコピー
         for (let c = 2; c <= 20; c++) {
-          // 既存のセルからスタイルをコピー
-          row.cell(c).style(exampleRow.cell(c).style());
+          const sourceCell = exampleRow.cell(c);
+          const targetCell = row.cell(c);
+          
+          // フォント、塗りつぶし、枠線、アライメント、表示形式を個別にコピー
+          const styleKeys: any[] = ["fontFamily", "fontSize", "bold", "italic", "underline", "fontColor", "fill", "border", "horizontalAlignment", "verticalAlignment", "numberFormat"];
+          styleKeys.forEach(key => {
+            try {
+              const styleVal = sourceCell.style(key);
+              if (styleVal !== undefined && styleVal !== null) {
+                targetCell.style(key, styleVal);
+              }
+            } catch (e) {
+              // スタイルコピーのエラーは無視して継続
+            }
+          });
         }
 
         // メニュー選択 (〇)
