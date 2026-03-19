@@ -47,6 +47,9 @@ export async function POST(req: Request) {
       "selectedMenus": ["選択されているメニュー名の配列"],
       "preferredTimes": ["第一希望の時間", "第二希望の時間", "第三希望の時間"],
       "hasService": true/false,
+      "isGuided": "案内有無 (有/無/空欄など)",
+      "isAdditionalMenuAllowed": "追加メニュー可否 (可/否/空欄など)",
+      "isCustomOrder": "オーダーメイドの内容 (内容があれば文字列、なければ空欄)",
       "remarks": "備考"
     }
   ]
@@ -128,6 +131,9 @@ ${text}
                     items: { type: "string" },
                   },
                   hasService: { type: "boolean" },
+                  isGuided: { type: "string" },
+                  isAdditionalMenuAllowed: { type: "string" },
+                  isCustomOrder: { type: "string" },
                   remarks: { type: "string" },
                 },
                 required: ["name"],

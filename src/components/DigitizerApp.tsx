@@ -26,6 +26,9 @@ interface CustomerData {
   selectedMenus: string[];
   preferredTimes: string[];
   hasService: boolean;
+  isGuided?: string;
+  isAdditionalMenuAllowed?: string;
+  isCustomOrder?: string;
   remarks: string;
 }
 
@@ -676,7 +679,18 @@ export default function DigitizerApp() {
                 {extractedData.customers.map((c, i) => (
                   <div key={i} style={{ display: "flex", gap: "8px", padding: "4px 0", borderBottom: i < extractedData.customers.length - 1 ? "1px solid #f0abfc" : "none", fontSize: "13px" }}>
                     <span style={{ fontWeight: "500", minWidth: "80px" }}>{c.name}</span>
-                    <span style={{ color: "#6b7280" }}>{c.selectedMenus.join(", ") || "なし"}</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ color: "#4b5563" }}>{c.selectedMenus.join(", ") || "なし"}</div>
+                      {(c.isGuided || c.isAdditionalMenuAllowed || c.isCustomOrder) && (
+                        <div style={{ fontSize: "11px", color: "#9333ea", marginTop: "2px" }}>
+                          {[
+                            c.isCustomOrder ? `オーダー: ${c.isCustomOrder}` : null,
+                            c.isGuided ? `案内: ${c.isGuided}` : null,
+                            c.isAdditionalMenuAllowed ? `追加メ: ${c.isAdditionalMenuAllowed}` : null,
+                          ].filter(Boolean).join(" / ")}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
