@@ -21,6 +21,9 @@ interface CustomerData {
   selectedMenus: string[];
   preferredTimes: string[];
   hasService: boolean;
+  isGuided?: string;
+  isAdditionalMenuAllowed?: string;
+  isCustomOrder?: string;
   remarks: string;
 }
 
@@ -39,20 +42,38 @@ export async function POST(req: Request) {
     const body: ExportRequest = await req.json();
     const { facilityName, year, month, day } = body;
 
-    // テンプレートファイル
-    const templatePath = path.join(
-      process.cwd(),
-      "docs",
-      "samples",
-      "sheets",
-      "【★ﾄﾞｸﾀｰｻﾝｺﾞ守口様】訪問施術サービス （申込書・請求書）.xlsx"
+    // テンプレートファイルの選択
+    const writtenTemplatesDir = path.join(process.cwd(), "docs", "samples", "written");
+    let templatePath = path.join(
+      writtenTemplatesDir,
+      "0203改訂【ドクターサンゴ守口】訪問施術サービス申込書v3.xlsx"
     );
 
+    // 施設名に一致するファイル名を探す
+    try {
+      if (fs.existsSync(writtenTemplatesDir)) {
+        const files = fs.readdirSync(writtenTemplatesDir);
+        const match = files.find(f => f.endsWith(".xlsx") && facilityName && f.includes(facilityName));
+        if (match) {
+          templatePath = path.join(writtenTemplatesDir, match);
+          console.log(`Using facility-specific template: ${match}`);
+        }
+      }
+    } catch (e) {
+      console.error("Template selection error:", e);
+    }
+
     if (!fs.existsSync(templatePath)) {
-      return NextResponse.json(
-        { error: "テンプレートファイルが見つかりません" },
-        { status: 500 }
-      );
+      // フォールバック（これもない場合はエラー）
+      const fallbackPath = path.join(process.cwd(), "docs", "samples", "sheets", "【★ﾄﾞｸﾀｰｻﾝｺﾞ守口様】訪問施術サービス （申込書・請求書）.xlsx");
+      if (fs.existsSync(fallbackPath)) {
+        templatePath = fallbackPath;
+      } else {
+        return NextResponse.json(
+          { error: "テンプレートファイルが見つかりません" },
+          { status: 500 }
+        );
+      }
     }
 
     // Pythonスクリプトのパス
