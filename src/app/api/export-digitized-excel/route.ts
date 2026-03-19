@@ -2,6 +2,42 @@ import { NextResponse } from "next/server";
 import path from "path";
 import fs from "fs";
 import os from "os";
+import JSZip from "jszip";
+
+// --- 共有数式 (Shared Formula) を個別数式に変換するXMLリペア関数 ---
+async function fixXlsxSharedFormulas(buffer: Buffer): Promise<Buffer> {
+  const zip = await JSZip.loadAsync(buffer);
+  const sheetFiles = Object.keys(zip.files).filter(name => name.startsWith("xl/worksheets/sheet"));
+  
+  for (const fileName of sheetFiles) {
+    let xml = await zip.file(fileName)!.async("string");
+    
+    // 1. 共有数式のマスターを探して、数式文字列を抽出
+    const masterFormulas: Record<string, string> = {};
+    const masterRegex = /<f [^>]*t="shared"[^>]*si="(\d+)"[^>]*>([^<]+)<\/f>/g;
+    let m;
+    while ((m = masterRegex.exec(xml)) !== null) {
+      masterFormulas[m[1]] = m[2];
+    }
+    
+    // 2. 共有数式のタグを全て通常の数式タグに置換 (クローン: 自閉タグ、マスター: 開閉タグ)
+    // クローン（自閉タグ）を置換: <f t="shared" si="0" /> -> <f>SUM(A1:B1)</f>
+    xml = xml.replace(/<f [^>]*t="shared"[^>]*si="(\d+)"[^>]*\/>/g, (match, si) => {
+      const formula = masterFormulas[si];
+      return formula ? `<f>${formula}</f>` : match; 
+    });
+    
+    // マスター（開閉タグ）を置換: <f [^>]*t="shared"[^>]*si="(\d+)"[^>]*>([^<]*)<\/f>/g, (match, si, formula) => {
+    // ExcelJSがShared Formulaを読み込む際に、マスターの数式が空になることがあるため、masterFormulasから取得を試みる
+    xml = xml.replace(/<f [^>]*t="shared"[^>]*si="(\d+)"[^>]*>([^<]*)<\/f>/g, (match, si, formula) => {
+      const fString = formula || masterFormulas[si] || "";
+      return `<f>${fString}</f>`;
+    });
+
+    zip.file(fileName, xml);
+  }
+  return await zip.generateAsync({ type: "nodebuffer" });
+}
 
 // --- 型定義 ---
 interface MenuItem {
@@ -17,9 +53,9 @@ interface CustomerData {
   selectedMenus: string[];
   preferredTimes: string[];
   hasService: boolean;
-  isGuided?: string;
-  isAdditionalMenuAllowed?: string;
-  isCustomOrder?: string;
+  isGuided: string;
+  isAdditionalMenuAllowed: string;
+  isCustomOrder: string;
   remarks: string;
 }
 
@@ -35,15 +71,14 @@ interface ExportRequest {
 
 export async function POST(req: Request) {
   try {
-    const body: ExportRequest = await req.json();
-    const { facilityName, year, month, day } = body;
+    const body = await req.json();
+    const facilityName = body.facilityName;
+    const dateStr = body.date || ""; 
+    const [year, month, day] = dateStr.split("-");
 
     // テンプレートファイルの選択
     const writtenTemplatesDir = path.join(process.cwd(), "docs", "samples", "written");
-    let templatePath = path.join(
-      writtenTemplatesDir,
-      "0203改訂【ドクターサンゴ守口】訪問施術サービス申込書v3.xlsx"
-    );
+    let templatePath = path.join(process.cwd(), "docs", "samples", "sheets", "【★ﾄﾞｸﾀｰｻﾝｺﾞ守口様】訪問施術サービス （申込書・請求書）.xlsx");
 
     // 施設名に一致するファイル名を探す
     try {
@@ -52,7 +87,7 @@ export async function POST(req: Request) {
         const match = files.find((f: string) => f.endsWith(".xlsx") && facilityName && f.includes(facilityName));
         if (match) {
           templatePath = path.join(writtenTemplatesDir, match);
-          console.log(`Using facility-specific template: ${match}`);
+          console.log(`Using facility-specific template: ${templatePath}`);
         }
       }
     } catch (e) {
@@ -76,7 +111,12 @@ export async function POST(req: Request) {
     try {
       const ExcelJS = require("exceljs");
       const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.readFile(templatePath);
+      
+      // XMLリペア処理を実行してから読み込む
+      const originalBuffer = fs.readFileSync(templatePath);
+      const repairedBuffer = await fixXlsxSharedFormulas(originalBuffer);
+      await workbook.xlsx.load(repairedBuffer);
+      
       const worksheet = workbook.worksheets[0];
 
       // --- レイアウトの動的検出 ---
@@ -113,7 +153,7 @@ export async function POST(req: Request) {
 
       // --- 顧客データ書き込み ---
       const customers = body.customers || [];
-      customers.forEach((customer, idx) => {
+      customers.forEach((customer: CustomerData, idx: number) => {
         const rowNum = rowDataStart + idx;
         const row = worksheet.getRow(rowNum);
         const exampleRow = worksheet.getRow(rowExample);
@@ -140,7 +180,7 @@ export async function POST(req: Request) {
 
         // メニュー選択 (〇)
         const selectedMenus = customer.selectedMenus || [];
-        selectedMenus.forEach(mName => {
+        selectedMenus.forEach((mName: string) => {
           for (const [colName, colIdx] of Object.entries(menuCols)) {
             if (mName.includes(colName) || colName.includes(mName)) {
               row.getCell(colIdx).value = "〇";
@@ -151,7 +191,7 @@ export async function POST(req: Request) {
 
         // 希望時間
         const times = customer.preferredTimes || [];
-        times.forEach((t, i) => { if (i < 3) row.getCell(13 + i).value = t; });
+        times.forEach((t: string, i: number) => { if (i < 3) row.getCell(13 + i).value = t; });
 
         // その他
         row.getCell(16).value = customer.isGuided || "";
