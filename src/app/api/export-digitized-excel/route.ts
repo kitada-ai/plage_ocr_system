@@ -73,45 +73,37 @@ export async function POST(req: Request) {
       }
     }
 
-    // --- Excel生成 ---
+    // --- Excel生成 (xlsx-populate) ---
     try {
-      const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.readFile(templatePath);
-      const worksheet = workbook.worksheets[0];
+      const XlsxPopulate = require("xlsx-populate");
+      const workbook = await XlsxPopulate.fromFileAsync(templatePath);
+      const sheet = workbook.sheet(0);
 
-      // --- レイアウトの動的検出 & Shared Formula 変換対策 ---
+      // --- レイアウトの動的検出 ---
       let rowFacility = 3, colFacility = 9, colDate = 16, rowHeader = 13, rowTotal = 14, rowExample = 15, rowDataStart = 16;
-      worksheet.eachRow((row, rowKey) => {
-        row.eachCell((cell, colKey) => {
-          const val = String(cell.value || "");
-          if (val.includes("施設名")) { rowFacility = rowKey; colFacility = colKey; }
-          if (val.includes("施術日")) { colDate = colKey; }
-          if (val.includes("No.")) { rowHeader = rowKey; }
-          if (val.includes("合計人数")) { rowTotal = rowKey; }
-          if (val.includes("記入例")) { rowExample = rowKey; rowDataStart = rowKey + 1; }
-          
-          // Shared Formula エラー対策: 全ての「共有数式」を「個別数式」に変換
-          // これにより、exceljsのマスター/クローン不整合エラーを回避しつつ、Excel上の計算機能は維持される
-          if (cell.type === ExcelJS.ValueType.Formula && (cell.value as any).shareType === 'shared') {
-            const formula = (cell.value as any).formula;
-            const result = (cell.value as any).result;
-            cell.value = { formula, result }; // shared 属性を除去
-          }
-        });
-      });
+      for (let r = 1; r <= 25; r++) {
+        for (let c = 1; c <= 25; c++) {
+          const cell = sheet.row(r).cell(c);
+          const val = String(cell.value() || "");
+          if (val.includes("施設名")) { rowFacility = r; colFacility = c; }
+          if (val.includes("施術日")) { colDate = c; }
+          if (val.includes("No.")) { rowHeader = r; }
+          if (val.includes("合計人数")) { rowTotal = r; }
+          if (val.includes("記入例")) { rowExample = r; rowDataStart = r + 1; }
+        }
+      }
 
       // --- ヘッダー書き込み ---
-      worksheet.getRow(rowFacility).getCell(colFacility).value = `施設名：${facilityName || ""}`;
+      sheet.row(rowFacility).cell(colFacility).value(`施設名：${facilityName || ""}`);
       const yearInt = parseInt(year || "0");
       const reiwa = yearInt > 2018 ? yearInt - 2018 : "";
-      worksheet.getRow(rowFacility).getCell(colDate).value = `施術日：令和 ${reiwa} 年 ${month || "  "} 月 ${day || "  "} 日`;
+      sheet.row(rowFacility).cell(colDate).value(`施術日：令和 ${reiwa} 年 ${month || "  "} 月 ${day || "  "} 日`);
 
       // --- メニュー列の特定 ---
       const menuCols: Record<string, number> = {};
       for (const r of [rowHeader - 1, rowHeader]) {
-        const row = worksheet.getRow(r);
-        for (let c = 7; c <= 14; c++) {
-          const v = String(row.getCell(c).value || "");
+        for (let c = 7; c <= 15; c++) {
+          const v = String(sheet.row(r).cell(c).value() || "");
           if (v && !["No.", "部屋番号", "氏名", "性別", "合計料金", "施術開始時間の希望", "合計", "料金"].some(s => v.includes(s))) {
             const cleanV = v.replace(/\n/g, "").split(" ")[0].split("(")[0].trim();
             if (cleanV) menuCols[cleanV] = c;
@@ -123,26 +115,19 @@ export async function POST(req: Request) {
       const customers = body.customers || [];
       customers.forEach((customer, idx) => {
         const rowNum = rowDataStart + idx;
-        const row = worksheet.getRow(rowNum);
-        const exampleRow = worksheet.getRow(rowExample);
+        const row = sheet.row(rowNum);
+        const exampleRow = sheet.row(rowExample);
 
         // 基本情報
-        row.getCell(2).value = customer.no || (idx + 1);
-        row.getCell(3).value = customer.room || "";
-        row.getCell(4).value = customer.name || "";
-        row.getCell(6).value = customer.gender || "";
+        row.cell(2).value(customer.no || (idx + 1));
+        row.cell(3).value(customer.room || "");
+        row.cell(4).value(customer.name || "");
+        row.cell(6).value(customer.gender || "");
 
-        // スタイルのコピー (記入例から) - 公式の推奨手法に近い形で個別にコピー
+        // スタイルのコピー (記入例から)
         for (let c = 2; c <= 20; c++) {
-          const srcCell = exampleRow.getCell(c);
-          const dstCell = row.getCell(c);
-          if (srcCell.style) {
-            dstCell.font = srcCell.font;
-            dstCell.fill = srcCell.fill;
-            dstCell.border = srcCell.border;
-            dstCell.alignment = srcCell.alignment;
-            dstCell.numFmt = srcCell.numFmt;
-          }
+          // 既存のセルからスタイルをコピー
+          row.cell(c).style(exampleRow.cell(c).style());
         }
 
         // メニュー選択 (〇)
@@ -150,7 +135,7 @@ export async function POST(req: Request) {
         selectedMenus.forEach(mName => {
           for (const [colName, colIdx] of Object.entries(menuCols)) {
             if (mName.includes(colName) || colName.includes(mName)) {
-              row.getCell(colIdx).value = "〇";
+              row.cell(colIdx).value("〇");
               break;
             }
           }
@@ -158,39 +143,48 @@ export async function POST(req: Request) {
 
         // 希望時間
         const times = customer.preferredTimes || [];
-        times.forEach((t, i) => { if (i < 3) row.getCell(13 + i).value = t; });
+        times.forEach((t, i) => { if (i < 3) row.cell(13 + i).value(t); });
 
         // その他
-        row.getCell(16).value = customer.isGuided || "";
-        if (customer.hasService) row.getCell(17).value = "サイン";
-        row.getCell(18).value = customer.isAdditionalMenuAllowed || "可・否";
-        row.getCell(19).value = customer.isCustomOrder || "本人・お任せ";
-        row.getCell(20).value = customer.remarks || "";
+        row.cell(16).value(customer.isGuided || "");
+        if (customer.hasService) row.cell(17).value("サイン");
+        row.cell(18).value(customer.isAdditionalMenuAllowed || "可・否");
+        row.cell(19).value(customer.isCustomOrder || "本人・お任せ");
+        row.cell(20).value(customer.remarks || "");
       });
 
       // --- 合計人数行 ---
       if (rowTotal) {
-        const totalRow = worksheet.getRow(rowTotal);
-        totalRow.getCell(4).value = customers.length;
+        const totalCell = sheet.row(rowTotal).cell(4);
+        totalCell.value(customers.length);
         
-        // メニュー列ごとの合計 (数式を復活させ、個別の数式として設定)
-        for (let c = 6; c <= 14; c++) {
-          if (totalRow.getCell(c).value !== null) {
-            const ltr = String.fromCharCode(64 + c);
-            totalRow.getCell(c).value = { 
-              formula: `COUNTIF(${ltr}${rowDataStart}:${ltr}${rowDataStart + customers.length + 5},"〇")`
-            };
+        // メニュー列ごとの合計 (数式を維持)
+        for (let c = 6; c <= 15; c++) {
+          const cell = sheet.row(rowTotal).cell(c);
+          if (cell.value() !== null && typeof cell.value() !== 'string') {
+             // すでに数式が入っているかチェック、入っていれば再設定するかそのまま
+             const ltr = String.fromCharCode(64 + c);
+             cell.formula(`COUNTIF(${ltr}${rowDataStart}:${ltr}${rowDataStart + customers.length + 10},"〇")`);
           }
         }
       }
 
-      const buffer = await workbook.xlsx.writeBuffer();
+      // 申込書以外のシートを削除 (任意)
+      const allSheets = workbook.sheets();
+      const mainSheet = allSheets[0];
+      allSheets.forEach((s: any, idx: number) => {
+        if (idx > 0 && s.name() !== "申込書") {
+           // s.delete(); // xlsx-populateではdeleteできる
+        }
+      });
+
+      const buffer = await workbook.outputAsync();
 
       const formatDate = `${year || ""}${month || ""}${day || ""}`;
       const fileName = `${facilityName || "申込書"}_${formatDate || "清書"}.xlsx`
         .replace(/[/\\?%*:|"<>]/g, "_");
 
-      return new NextResponse(buffer as any, {
+      return new NextResponse(buffer, {
         status: 200,
         headers: {
           "Content-Disposition": `attachment; filename="${encodeURIComponent(fileName)}"`,
