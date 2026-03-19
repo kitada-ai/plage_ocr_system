@@ -465,7 +465,7 @@ export default function DigitizerApp() {
           </div>
         )}
 
-        {processingProgress && (
+        {processingProgress && !statusMessage.includes("OCR") && !statusMessage.includes("AI") && (
           <div
             style={{
               padding: "8px 16px",
