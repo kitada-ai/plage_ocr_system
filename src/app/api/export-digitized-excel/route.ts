@@ -125,11 +125,17 @@ export async function POST(req: Request) {
         row.getCell(4).value = customer.name || "";
         row.getCell(6).value = customer.gender || "";
 
-        // スタイルのコピー (記入例から)
+        // スタイルのコピー (記入例から) - 公式の推奨手法に近い形で個別にコピー
         for (let c = 2; c <= 20; c++) {
           const srcCell = exampleRow.getCell(c);
           const dstCell = row.getCell(c);
-          dstCell.style = { ...srcCell.style };
+          if (srcCell.style) {
+            dstCell.font = srcCell.font;
+            dstCell.fill = srcCell.fill;
+            dstCell.border = srcCell.border;
+            dstCell.alignment = srcCell.alignment;
+            dstCell.numFmt = srcCell.numFmt;
+          }
         }
 
         // メニュー選択 (〇)
