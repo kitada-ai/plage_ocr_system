@@ -49,7 +49,6 @@ export async function POST(req: Request) {
         const match = files.find((f: string) => f.endsWith(".xlsx") && facilityName && f.includes(facilityName));
         if (match) {
           templatePath = path.join(writtenTemplatesDir, match);
-          console.log(`Using facility-specific template: ${templatePath}`);
         }
       }
     } catch (e) {
@@ -76,52 +75,36 @@ export async function POST(req: Request) {
       });
       const sheet = workbook.sheet("申込書");
 
-      // --- レイアウトの動的検出 ---
-      let rowFacility = 3, colFacility = 9, colDate = 16, rowHeader = 13, rowTotal = 15, rowExample = 16, rowDataStart = 17;
-      for (let r = 1; r <= 30; r++) {
-        for (let c = 1; c <= 25; c++) {
-          const val = String(sheet.row(r).cell(c).value() || "");
-          if (val.includes("施設名")) { rowFacility = r; colFacility = c; }
-          if (val.includes("施術日")) { colDate = c; }
-          if (val.includes("No.")) { rowHeader = r; }
-          if (val.includes("合計人数")) { rowTotal = r; }
-          if (val.includes("記入例")) { rowExample = r; rowDataStart = r + 1; }
-        }
-      }
-
-      // --- ヘッダー・注意書きの精密設定 (文字サイズ・内容) ---
+      // --- ユーザー指定の絶対番地設定 ---
+      // Row 1: タイトル (23pt, 太文字)
       sheet.cell("B1").value("【訪問理美容サービス　申込書】").style({ fontSize: 23, bold: true });
-      sheet.cell("B3").value("下記の項目をご記入のうえ、お申し込みください。").style("fontSize", 13);
-      sheet.cell("B4").value("※ご希望の施術内容に〇印をつけてください。").style("fontSize", 13);
-      sheet.cell("B5").value("※「施術開始時間の希望」がございましたら、第一～第三希望までご記入ください。").style("fontSize", 13);
-      sheet.cell("B6").value("※お申込みはご訪問日の5日前までとなります。").style("fontSize", 13);
-      sheet.cell("B7").value("※顔そり、シャンプーのみのご注文を承っておりません。").style("fontSize", 13);
-      sheet.cell("B8").value("※カラー初回の方はパッチテストを実施し、異常なければ翌月から実施となります。（パッチテストに費用はかかりません）").style("fontSize", 13);
-      sheet.cell("B9").value("※施術終了後にサインをいただき、施術実施月の月末までにデータにて事務局まで送付ください。（こちらをもとに御請求書を発行いたします）").style("fontSize", 13);
-      sheet.cell("B10").value("事務局アドレス").style("fontSize", 13);
-      sheet.cell("D10").value("houmon@hannan-plage.jp").style("fontSize", 13);
 
-      // 右上 (施設名・施術日)
+      // Row 3: 各種情報 (14pt)
       const yearInt = parseInt(year || "0");
       const reiwa = yearInt > 2018 ? yearInt - 2018 : "  ";
       sheet.cell("I3").value(`施設名：${facilityName || ""}`).style("fontSize", 14);
       sheet.cell("N3").value("施術日：").style("fontSize", 14);
       sheet.cell("O3").value(`令和 ${reiwa} 年 ${month || "  "} 月 ${day || "  "} 日`).style("fontSize", 14);
-
-      // 下線などのスタイリング
       sheet.range("I3:M3").style({ border: { bottom: true } });
       sheet.range("O3:R3").style({ border: { bottom: true } });
 
-      // --- 確認サイン欄 ---
+      // Row 3 (続き): 注意書き 13pt
+      sheet.cell("B3").value("下記の項目をご記入のうえ、お申し込みください。").style("fontSize", 13);
+      sheet.cell("B4").value("※ご希望の施術内容に〇印をつけてください。").style("fontSize", 13);
+      sheet.cell("B5").value("※「施術開始時間の希望」は第一～第三希望まですべてご記入ください。").style("fontSize", 13);
+      sheet.cell("B6").value("※お申込みはご訪問日の5日前までとなります。").style("fontSize", 13);
+      sheet.cell("B7").value("※顔そり、シャンプーのみのご注文を承っておりません。").style("fontSize", 13);
+      sheet.cell("B8").value("※カラー初回の方はパッチテストを実施し、異常なければ翌月から実施となります。").style("fontSize", 13);
+      sheet.cell("B9").value("※施術終了後にサインをいただき事務局まで送付ください。").style("fontSize", 13);
+      sheet.cell("B10").value("事務局アドレス").style("fontSize", 13);
+      sheet.cell("D10").value("houmon@hannan-plage.jp").style("fontSize", 13);
+
+      // --- 確認サイン欄 (S1:U9) ---
       const customers = body.customers || [];
       const hasGuide = customers.some((c: any) => c.isGuided && String(c.isGuided).trim() !== "");
-      
       const signRange = hasGuide ? "S1:U9" : "S1:T9";
-      const signBox = sheet.range(signRange);
-      signBox.style({ border: true, fill: "f2f2f2" });
-      
+      sheet.range(signRange).style({ border: true, fill: "f2f2f2" });
       sheet.range(hasGuide ? "S1:U2" : "S1:T2").merged(true).value("確認サイン欄").style({ horizontalAlignment: "center", verticalAlignment: "center", bold: true });
-      
       const signHeaders = hasGuide ? ["施設側", "案内担当", "訪問側"] : ["施設側", "訪問側"];
       signHeaders.forEach((text, i) => {
         const col = String.fromCharCode(83 + i); 
@@ -130,58 +113,74 @@ export async function POST(req: Request) {
         sheet.range(`${col}5:${col}9`).style({ border: { left: true, right: true, top: true, bottom: true }, fill: "ffffff" });
       });
 
-      // --- データ書き込み ---
-      const menuCols: Record<string, number> = {};
-      const searchRow = rowHeader || 11;
-      for (let c = 7; c <= 15; c++) {
-        const v = String(sheet.row(searchRow).cell(c).value() || sheet.row(searchRow - 1).cell(c).value() || "");
-        if (v && !["No.", "部屋番号", "氏名", "性別", "合計料金", "施術開始時間の希望", "合計", "料金"].some(s => v.includes(s))) {
-          const cleanV = v.replace(/\n/g, "").split(" ")[0].split("(")[0].trim();
-          if (cleanV) menuCols[cleanV] = c;
-        }
-      }
+      // --- ユーザー指定の行マッピング ---
+      // 行11: 空白 (既存の記入例などをクリア)
+      sheet.row(11).clear();
 
+      // 行12-14: 項目のヘッダー (テンプレートのRow 8-10からコピー)
+      // 他のテンプレートに合わせて動的に取得する代わりに、12-14を固定ヘッダーとする
+      // 実際には 11行目以降を一度すべてクリアして構築
+      for (let r = 11; r <= 100; r++) sheet.row(r).clear();
+
+      // ヘッダー labels (Row 12, 13, 14)
+      sheet.row(12).cell(2).value("No.");
+      sheet.row(12).cell(3).value("部屋番号");
+      sheet.row(12).cell(4).value("氏名");
+      sheet.row(12).cell(6).value("性別");
+      sheet.row(12).cell(7).value("メニュー／料金").style({ horizontalAlignment: "center" });
+      sheet.row(13).cell(7).value("カット");
+      sheet.row(13).cell(8).value("カラー");
+      sheet.row(13).cell(9).value("パーマ");
+      sheet.row(13).cell(10).value("マニキュア");
+      sheet.row(13).cell(11).value("顔そり");
+      sheet.row(13).cell(12).value("シャンプー");
+      sheet.row(12).cell(13).value("合計料金");
+      sheet.row(12).cell(14).value("施術開始時間の希望");
+      sheet.row(14).cell(14).value("第一希望");
+      sheet.row(14).cell(15).value("第二希望");
+      sheet.row(14).cell(16).value("第三希望");
+      sheet.row(12).cell(17).value("施術実施\n有無");
+      sheet.row(12).cell(18).value("備考");
+
+      // 行15: 合計人数
+      sheet.row(15).cell(3).value("合計人数").style({ bold: true, horizontalAlignment: "right", fill: "e2f0d9" });
+      sheet.row(15).cell(4).value(customers.length).style({ bold: true, fill: "e2f0d9" });
+
+      // 行16: 記入例
+      sheet.row(16).cell(2).value("記入例").style({ italic: true, fill: "f2f2f2" });
+      sheet.row(16).cell(4).value("山田　太郎").style({ italic: true, fill: "f2f2f2" });
+      sheet.row(16).cell(7).value("〇").style({ fill: "f2f2f2" });
+
+      // 行17以降: 実データ
+      const rowDataStart = 17;
       customers.forEach((customer: CustomerData, idx: number) => {
         const rowNum = rowDataStart + idx;
         const row = sheet.row(rowNum);
-        
         row.cell(2).value(customer.no || (idx + 1));
         row.cell(3).value(customer.room || "");
         row.cell(4).value(customer.name || "");
         row.cell(6).value(customer.gender || "");
 
-        const selectedMenus = customer.selectedMenus || [];
-        selectedMenus.forEach((mName: string) => {
-          for (const [colName, colIdx] of Object.entries(menuCols)) {
-            if (mName.includes(colName) || colName.includes(mName)) {
-              row.cell(colIdx).value("〇");
-              break;
-            }
-          }
-        });
-
+        // メニュー
+        if (customer.selectedMenus) {
+          customer.selectedMenus.forEach(m => {
+            if (m.includes("カット")) row.cell(7).value("〇");
+            if (m.includes("カラー")) row.cell(8).value("〇");
+            if (m.includes("パーマ")) row.cell(9).value("〇");
+            if (m.includes("マニキュア")) row.cell(10).value("〇");
+            if (m.includes("顔そり")) row.cell(11).value("〇");
+            if (m.includes("シャンプー")) row.cell(12).value("〇");
+          });
+        }
+        
         const times = customer.preferredTimes || [];
-        times.forEach((t: string, i: number) => { if (i < 3) row.cell(13 + i).value(t); });
+        times.forEach((t: string, i: number) => { if (i < 3) row.cell(14 + i).value(t); });
 
-        row.cell(16).value(customer.isGuided || "");
-        if (customer.hasService) row.cell(17).value("サイン");
-        row.cell(18).value(customer.isAdditionalMenuAllowed || "可・否");
-        row.cell(19).value(customer.isCustomOrder || "本人・お任せ");
-        row.cell(20).value(customer.remarks || "");
+        if (customer.hasService) row.cell(17).value("✓");
+        row.cell(18).value(customer.remarks || "");
       });
 
-      // --- 合計人数行 (記入例の上) ---
-      if (rowTotal) {
-        let totalValCol = 4;
-        for (let c = 1; c <= 10; c++) {
-          const val = String(sheet.row(rowTotal).cell(c).value() || "");
-          if (val.includes("合計人数")) { totalValCol = c + 1; break; }
-        }
-        sheet.row(rowTotal).cell(totalValCol).value(customers.length).style({ bold: true });
-      }
-
       const buffer = await workbook.outputAsync();
-
       const formatDate = `${year || ""}${month || ""}${day || ""}`;
       const fileName = `${facilityName || "申込書"}_${formatDate || "清書"}.xlsx`
         .replace(/[/\\?%*:|"<>]/g, "_");
@@ -195,17 +194,11 @@ export async function POST(req: Request) {
       });
     } catch (error: any) {
       console.error("Excel Generation Error:", error);
-      return NextResponse.json(
-        { error: "Excel生成に失敗しました", details: error.message },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Excel生成に失敗しました", details: error.message }, { status: 500 });
     }
   } catch (error: unknown) {
     console.error("API Route Error:", error);
     const message = error instanceof Error ? error.message : "Unknown error";
-    return NextResponse.json(
-      { error: "Excel生成処理中にエラーが発生しました", details: message },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Excel生成処理中にエラーが発生しました", details: message }, { status: 500 });
   }
 }
