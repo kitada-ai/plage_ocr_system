@@ -3,8 +3,6 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 
-
-
 // --- 型定義 ---
 interface MenuItem {
   name: string;
@@ -67,7 +65,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // --- Excel生成 (xlsx-populate: 値とスタイルの精密設定) ---
+    // --- Excel生成 ---
     try {
       const XlsxPopulate = require("xlsx-populate");
       const workbook = await XlsxPopulate.fromFileAsync(templatePath);
@@ -77,6 +75,19 @@ export async function POST(req: Request) {
         if (s.name() !== "申込書") s.delete();
       });
       const sheet = workbook.sheet("申込書");
+
+      // --- レイアウトの動的検出 ---
+      let rowFacility = 3, colFacility = 9, colDate = 16, rowHeader = 13, rowTotal = 15, rowExample = 16, rowDataStart = 17;
+      for (let r = 1; r <= 30; r++) {
+        for (let c = 1; c <= 25; c++) {
+          const val = String(sheet.row(r).cell(c).value() || "");
+          if (val.includes("施設名")) { rowFacility = r; colFacility = c; }
+          if (val.includes("施術日")) { colDate = c; }
+          if (val.includes("No.")) { rowHeader = r; }
+          if (val.includes("合計人数")) { rowTotal = r; }
+          if (val.includes("記入例")) { rowExample = r; rowDataStart = r + 1; }
+        }
+      }
 
       // --- ヘッダー・注意書きの精密設定 (文字サイズ・内容) ---
       sheet.cell("B1").value("【訪問理美容サービス　申込書】").style({ fontSize: 23, bold: true });
@@ -97,12 +108,11 @@ export async function POST(req: Request) {
       sheet.cell("N3").value("施術日：").style("fontSize", 14);
       sheet.cell("O3").value(`令和 ${reiwa} 年 ${month || "  "} 月 ${day || "  "} 日`).style("fontSize", 14);
 
-      // 下線などのスタイリング (画像参考)
+      // 下線などのスタイリング
       sheet.range("I3:M3").style({ border: { bottom: true } });
       sheet.range("O3:R3").style({ border: { bottom: true } });
 
-      // --- 確認サイン欄 (動的構築) ---
-      // 案内担当の有無をチェック (データに案内担当が含まれているか)
+      // --- 確認サイン欄 ---
       const customers = body.customers || [];
       const hasGuide = customers.some((c: any) => c.isGuided && String(c.isGuided).trim() !== "");
       
@@ -114,20 +124,17 @@ export async function POST(req: Request) {
       
       const signHeaders = hasGuide ? ["施設側", "案内担当", "訪問側"] : ["施設側", "訪問側"];
       signHeaders.forEach((text, i) => {
-        const col = String.fromCharCode(83 + i); // S, T, U
+        const col = String.fromCharCode(83 + i); 
         sheet.cell(`${col}3`).value(text).style({ horizontalAlignment: "center", fontSize: 11 });
         sheet.cell(`${col}4`).value("サイン").style({ horizontalAlignment: "center", fontSize: 9, fontColor: "808080" });
-        // サイン記入スペース
         sheet.range(`${col}5:${col}9`).style({ border: { left: true, right: true, top: true, bottom: true }, fill: "ffffff" });
       });
 
-      // --- データ行 (12行目から) ---
-      const rowDataStart = 12;
-      
-      // メニュー列の特定 (テンプレートの11行目あたりから検索)
+      // --- データ書き込み ---
       const menuCols: Record<string, number> = {};
+      const searchRow = rowHeader || 11;
       for (let c = 7; c <= 15; c++) {
-        const v = String(sheet.row(11).cell(c).value() || sheet.row(10).cell(c).value() || "");
+        const v = String(sheet.row(searchRow).cell(c).value() || sheet.row(searchRow - 1).cell(c).value() || "");
         if (v && !["No.", "部屋番号", "氏名", "性別", "合計料金", "施術開始時間の希望", "合計", "料金"].some(s => v.includes(s))) {
           const cleanV = v.replace(/\n/g, "").split(" ")[0].split("(")[0].trim();
           if (cleanV) menuCols[cleanV] = c;
@@ -163,10 +170,15 @@ export async function POST(req: Request) {
         row.cell(20).value(customer.remarks || "");
       });
 
-      // --- 合計人数行 (データの直下) ---
-      const rowTotal = rowDataStart + customers.length;
-      sheet.row(rowTotal).cell(3).value("合計人数").style({ bold: true, horizontalAlignment: "right" });
-      sheet.row(rowTotal).cell(4).value(customers.length).style({ bold: true });
+      // --- 合計人数行 (記入例の上) ---
+      if (rowTotal) {
+        let totalValCol = 4;
+        for (let c = 1; c <= 10; c++) {
+          const val = String(sheet.row(rowTotal).cell(c).value() || "");
+          if (val.includes("合計人数")) { totalValCol = c + 1; break; }
+        }
+        sheet.row(rowTotal).cell(totalValCol).value(customers.length).style({ bold: true });
+      }
 
       const buffer = await workbook.outputAsync();
 
@@ -197,4 +209,3 @@ export async function POST(req: Request) {
     );
   }
 }
-
