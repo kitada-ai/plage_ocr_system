@@ -3,8 +3,6 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 
-
-
 // --- 型定義 ---
 interface MenuItem {
   name: string;
@@ -67,35 +65,74 @@ export async function POST(req: Request) {
       }
     }
 
-    // --- Excel生成 (xlsx-populate: 値のみ書き込み) ---
+    // --- Excel生成 (xlsx-populate) ---
     try {
       const XlsxPopulate = require("xlsx-populate");
       const workbook = await XlsxPopulate.fromFileAsync(templatePath);
       
-      // 対象シートの特定
-      let sheet = workbook.sheet("申込書");
+      // 不要なシートを削除 (申込書のみ残す)
+      const targetSheetName = "申込書";
+      workbook.sheets().forEach((s: any) => {
+        if (s.name() !== targetSheetName) s.delete();
+      });
+      let sheet = workbook.sheet(targetSheetName);
       if (!sheet) sheet = workbook.sheet(0);
 
-      // --- レイアウトの動的検出 ---
-      let rowFacility = 3, colFacility = 9, colDate = 16, rowHeader = 13, rowTotal = 14, rowExample = 15, rowDataStart = 16;
-      for (let r = 1; r <= 30; r++) {
-        for (let c = 1; c <= 25; c++) {
-          const val = String(sheet.row(r).cell(c).value() || "");
-          if (val.includes("施設名")) { rowFacility = r; colFacility = c; }
-          if (val.includes("施術日")) { colDate = c; }
-          if (val.includes("No.")) { rowHeader = r; }
-          if (val.includes("合計人数")) { rowTotal = r; }
-          if (val.includes("記入例")) { rowExample = r; rowDataStart = r + 1; }
-        }
-      }
+      // --- ヘッダー文字配置とスタイリング ---
+      const style13 = { fontSize: 13 };
+      const style14 = { fontSize: 14 };
+      
+      sheet.cell("B1").value("【訪問理美容サービス　申込書】").style({ fontSize: 23, bold: true });
+      sheet.cell("B3").value("下記の項目をご記入のうえ、お申し込みください。").style(style13);
+      sheet.cell("B4").value("※ご希望の施術内容に〇印をつけてください。").style(style13);
+      sheet.cell("B5").value("※「施術開始時間の希望」がございましたら、第一～第三希望までご記入ください。").style(style13);
+      sheet.cell("B6").value("※お申込みはご訪問日の5日前までとなります。").style(style13);
+      sheet.cell("B7").value("※顔そり、シャンプーのみのご注文を承っておりません。").style(style13);
+      sheet.cell("B8").value("※カラー初回の方はパッチテストを実施し、異常なければ翌月から実施となります。（パッチテストに費用はかかりません）").style(style13);
+      sheet.cell("B9").value("※施術終了後にサインをいただき、施術実施月の月末までにデータにて事務局まで送付ください。（こちらをもとに御請求書を発行いたします）").style(style13);
+      sheet.cell("B10").value("事務局アドレス").style(style13);
+      sheet.cell("D10").value("houmon@hannan-plage.jp").style(style13);
 
-      // --- ヘッダー書き込み ---
-      sheet.row(rowFacility).cell(colFacility).value(`施設名：${facilityName || ""}`);
+      // 施設名・施術日 (I列, N列, O列)
       const yearInt = parseInt(year || "0");
       const reiwa = yearInt > 2018 ? yearInt - 2018 : "";
-      sheet.row(rowFacility).cell(colDate).value(`施術日：令和 ${reiwa} 年 ${month || "  "} 月 ${day || "  "} 日`);
+      sheet.cell("I3").value(`施設名：${facilityName || ""}`).style(style14);
+      sheet.cell("N3").value("施術日：").style(style14);
+      sheet.cell("O3").value(`令和 ${reiwa} 年 ${month || "  "} 月 ${day || "  "} 日`).style(style14);
 
-      // --- メニュー列の特定 ---
+      // --- 確認サイン欄 (動的) ---
+      const customers = body.customers || [];
+      const hasGuider = customers.some((c: CustomerData) => c.isGuided && String(c.isGuided).trim() !== "" && String(c.isGuided).trim() !== "否");
+      
+      // サイン欄の描画
+      if (hasGuider) {
+        sheet.range("S1:U1").merged(true).value("確認サイン欄").style({ horizontalAlignment: "center", fill: "e0e0e0", border: true });
+        sheet.cell("S2").value("施設側").style({ border: true, horizontalAlignment: "center" });
+        sheet.cell("T2").value("案内担当").style({ border: true, horizontalAlignment: "center" });
+        sheet.cell("U2").value("訪問側").style({ border: true, horizontalAlignment: "center" });
+        sheet.range("S3:U3").value("サイン").style({ border: true, horizontalAlignment: "center", fontSize: 9 });
+        sheet.range("S4:S9").merged(true).style({ border: true });
+        sheet.range("T4:T9").merged(true).style({ border: true });
+        sheet.range("U4:U9").merged(true).style({ border: true });
+      } else {
+        sheet.range("S1:T1").merged(true).value("確認サイン欄").style({ horizontalAlignment: "center", fill: "e0e0e0", border: true });
+        sheet.cell("S2").value("施設側").style({ border: true, horizontalAlignment: "center" });
+        sheet.cell("T2").value("訪問側").style({ border: true, horizontalAlignment: "center" });
+        sheet.range("S3:T3").value("サイン").style({ border: true, horizontalAlignment: "center", fontSize: 9 });
+        sheet.range("S4:S9").merged(true).style({ border: true });
+        sheet.range("T4:T9").merged(true).style({ border: true });
+      }
+
+      // --- レイアウトの動적検出 (データ行) ---
+      let rowHeader = 13, rowTotal = 14, rowExample = 15, rowDataStart = 16;
+      for (let r = 10; r <= 30; r++) {
+        const val = String(sheet.row(r).cell(2).value() || "");
+        if (val.includes("No.")) rowHeader = r;
+        if (val.includes("合計人数")) rowTotal = r;
+        if (val.includes("記入例")) { rowExample = r; rowDataStart = r + 1; }
+      }
+
+      // メニュー列の特定
       const menuCols: Record<string, number> = {};
       for (const r of [rowHeader - 1, rowHeader]) {
         for (let c = 7; c <= 15; c++) {
@@ -108,18 +145,15 @@ export async function POST(req: Request) {
       }
 
       // --- 顧客データ書き込み ---
-      const customers = body.customers || [];
       customers.forEach((customer: CustomerData, idx: number) => {
         const rowNum = rowDataStart + idx;
         const row = sheet.row(rowNum);
         
-        // 既存の行を活かしつつ値を書き込む
         row.cell(2).value(customer.no || (idx + 1));
         row.cell(3).value(customer.room || "");
         row.cell(4).value(customer.name || "");
         row.cell(6).value(customer.gender || "");
 
-        // メニュー選択 (〇)
         const selectedMenus = customer.selectedMenus || [];
         selectedMenus.forEach((mName: string) => {
           for (const [colName, colIdx] of Object.entries(menuCols)) {
@@ -130,12 +164,10 @@ export async function POST(req: Request) {
           }
         });
 
-        // 希望時間
         const times = customer.preferredTimes || [];
         times.forEach((t: string, i: number) => { if (i < 3) row.cell(13 + i).value(t); });
 
-        // その他
-        row.cell(16).value(customer.isGuided || "");
+        row.cell(16).value(customer.isGuided || "否");
         if (customer.hasService) row.cell(17).value("サイン");
         row.cell(18).value(customer.isAdditionalMenuAllowed || "可・否");
         row.cell(19).value(customer.isCustomOrder || "本人・お任せ");
@@ -153,27 +185,20 @@ export async function POST(req: Request) {
       const fileName = `${facilityName || "申込書"}_${formatDate || "清書"}.xlsx`
         .replace(/[/\\?%*:|"<>]/g, "_");
 
-      return new NextResponse(buffer as any, {
+      return new NextResponse(buffer, {
         status: 200,
         headers: {
           "Content-Disposition": `attachment; filename="${encodeURIComponent(fileName)}"`,
           "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         },
       });
-    } catch (error: any) {
-      console.error("Excel Generation Error:", error);
-      return NextResponse.json(
-        { error: "Excel生成に失敗しました", details: error.message },
-        { status: 500 }
-      );
+    } catch (innerError: any) {
+      console.error("Inner Excel Error:", innerError);
+      return NextResponse.json({ error: "Excel生成中にエラーが発生しました", details: innerError.message }, { status: 500 });
     }
   } catch (error: unknown) {
     console.error("API Route Error:", error);
     const message = error instanceof Error ? error.message : "Unknown error";
-    return NextResponse.json(
-      { error: "Excel生成処理中にエラーが発生しました", details: message },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Excel生成処理中にエラーが発生しました", details: message }, { status: 500 });
   }
 }
-
