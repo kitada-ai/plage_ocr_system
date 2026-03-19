@@ -7,35 +7,46 @@ import JSZip from "jszip";
 // --- 共有数式 (Shared Formula) を個別数式に変換するXMLリペア関数 ---
 async function fixXlsxSharedFormulas(buffer: Buffer): Promise<Buffer> {
   const zip = await JSZip.loadAsync(buffer);
-  const sheetFiles = Object.keys(zip.files).filter(name => name.startsWith("xl/worksheets/sheet"));
   
+  // 1. 各シートの共有数式をフラット化
+  const sheetFiles = Object.keys(zip.files).filter(name => name.startsWith("xl/worksheets/sheet"));
   for (const fileName of sheetFiles) {
     let xml = await zip.file(fileName)!.async("string");
-    
-    // 1. 共有数式のマスターを探して、数式文字列を抽出
     const masterFormulas: Record<string, string> = {};
     const masterRegex = /<f [^>]*t="shared"[^>]*si="(\d+)"[^>]*>([^<]+)<\/f>/g;
     let m;
-    while ((m = masterRegex.exec(xml)) !== null) {
-      masterFormulas[m[1]] = m[2];
-    }
+    while ((m = masterRegex.exec(xml)) !== null) masterFormulas[m[1]] = m[2];
     
-    // 2. 共有数式のタグを全て通常の数式タグに置換 (クローン: 自閉タグ、マスター: 開閉タグ)
-    // クローン（自閉タグ）を置換: <f t="shared" si="0" /> -> <f>SUM(A1:B1)</f>
     xml = xml.replace(/<f [^>]*t="shared"[^>]*si="(\d+)"[^>]*\/>/g, (match, si) => {
       const formula = masterFormulas[si];
       return formula ? `<f>${formula}</f>` : match; 
     });
-    
-    // マスター（開閉タグ）を置換: <f [^>]*t="shared"[^>]*si="(\d+)"[^>]*>([^<]*)<\/f>/g, (match, si, formula) => {
-    // ExcelJSがShared Formulaを読み込む際に、マスターの数式が空になることがあるため、masterFormulasから取得を試みる
     xml = xml.replace(/<f [^>]*t="shared"[^>]*si="(\d+)"[^>]*>([^<]*)<\/f>/g, (match, si, formula) => {
       const fString = formula || masterFormulas[si] || "";
       return `<f>${fString}</f>`;
     });
-
     zip.file(fileName, xml);
   }
+
+  // 2. calcChain.xmlを削除して不整合を回避（Excelに再計算を強制）
+  zip.remove("xl/calcChain.xml");
+
+  // 3. [Content_Types].xml から calcChain の定義を削除
+  const contentTypesPath = "[Content_Types].xml";
+  if (zip.file(contentTypesPath)) {
+    let ctXml = await zip.file(contentTypesPath)!.async("string");
+    ctXml = ctXml.replace(/<Override[^>]*PartName="\/xl\/calcChain\.xml"[^>]*\/>/g, "");
+    zip.file(contentTypesPath, ctXml);
+  }
+
+  // 4. xl/_rels/workbook.xml.rels から calcChain のリレーションを削除
+  const workbookRelsPath = "xl/_rels/workbook.xml.rels";
+  if (zip.file(workbookRelsPath)) {
+    let relsXml = await zip.file(workbookRelsPath)!.async("string");
+    relsXml = relsXml.replace(/<Relationship [^>]*Target="calcChain\.xml"[^>]*\/>/g, "");
+    zip.file(workbookRelsPath, relsXml);
+  }
+
   return await zip.generateAsync({ type: "nodebuffer" });
 }
 
